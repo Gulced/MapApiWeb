@@ -1,24 +1,34 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Box, Paper, TextField, Button, Typography, InputAdornment, IconButton
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import LockIcon from '@mui/icons-material/Lock';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
 
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [showPass, setShowPass] = useState(false);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setMessage('');
     try {
       const response = await axios.post('http://localhost:5143/api/Auth/login', { email, password });
       localStorage.setItem('token', response.data.token);
-      setMessage('Login başarılı! 🎉');
+      setMessage('Giriş başarılı! 🎉');
+      // Yönlendirme için 1 saniye bekletmek istemiyorsan setTimeout'u kaldırabilirsin!
+      setTimeout(() => {
+        navigate('/map');
+      }, 1000);
+      // Yönlendirme hemen olsun istersen yukarıdaki iki satırı şu şekilde değiştir:
+      // navigate('/map');
     } catch (error) {
       setMessage('Giriş başarısız! ' + (error.response?.data?.message || 'Sunucuya ulaşılamıyor'));
     }
@@ -27,19 +37,19 @@ function Login() {
   return (
     <Box sx={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg,#deeaff 0%,#b6ccfa 60%,#2563eb 100%)',
+      background: 'linear-gradient(135deg,#e0e7ff 0%,#b6ccfa 50%,#2563eb 100%)',
       display: 'flex', alignItems: 'center', justifyContent: 'center'
     }}>
-      <Paper elevation={8}
+      <Paper elevation={10}
         sx={{
-          p: 5, borderRadius: 4, minWidth: 350,
-          backdropFilter: "blur(2px)",
-          boxShadow: "0 6px 48px 0 rgba(44, 114, 209, .18)"
+          p: 5, borderRadius: 5, minWidth: 360,
+          backdropFilter: "blur(3px)",
+          boxShadow: "0 8px 48px 0 rgba(44, 114, 209, .18)"
         }}>
-        <Typography variant="h4" align="center" fontWeight={800} color="#2563eb" letterSpacing={1} mb={3}>
+        <Typography variant="h4" align="center" fontWeight={900} color="#2563eb" letterSpacing={1} mb={3}>
           <span style={{ fontFamily: "monospace" }}>🗺️ MapBased Login</span>
         </Typography>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} autoComplete="off">
           <TextField
             fullWidth
             margin="normal"
@@ -75,7 +85,7 @@ function Login() {
                     edge="end"
                     size="small"
                   >
-                    {showPass ? "🙈" : "👁️"}
+                    {showPass ? <VisibilityOff /> : <Visibility />}
                   </IconButton>
                 </InputAdornment>
               ),
