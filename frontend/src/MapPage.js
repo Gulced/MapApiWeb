@@ -1,254 +1,276 @@
-import React, { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
+import React, { useEffect, useRef, useState } from "react";
+import "ol/ol.css";
+import Map from "ol/Map";
+import View from "ol/View";
+import { fromLonLat, toLonLat } from "ol/proj";
+import TileLayer from "ol/layer/Tile";
+import OSM from "ol/source/OSM";
+import VectorLayer from "ol/layer/Vector";
+import VectorSource from "ol/source/Vector";
+import Feature from "ol/Feature";
+import Point from "ol/geom/Point";
+import { Icon, Style } from "ol/style";
 import axios from "axios";
-import { Button, TextField, Box } from "@mui/material";
-import "leaflet/dist/leaflet.css";
-
-// Marker objesinde lat/lng dönüştürücü yardımcı fonksiyon
-function getLatLng(marker) {
-  // Eğer marker.lat ve marker.lng varsa direkt al
-  if (marker.lat !== undefined && marker.lng !== undefined) {
-    return [marker.lat, marker.lng];
-  }
-  // Eğer location.coordinates şeklinde geldiyse (örn: [lng, lat])
-  if (
-    marker.location &&
-    Array.isArray(marker.location.coordinates) &&
-    marker.location.coordinates.length === 2
-  ) {
-    return [marker.location.coordinates[1], marker.location.coordinates[0]];
-  }
-  // Hatalıysa undefined döndür
-  return undefined;
-}
 
 function MapPage() {
+  const mapRef = useRef();
+  const [map, setMap] = useState(null);
+  const [vectorSource] = useState(new VectorSource());
   const [markers, setMarkers] = useState([]);
-  const [adding, setAdding] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [editMarkerId, setEditMarkerId] = useState(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDesc, setEditDesc] = useState("");
+  const [popup, setPopup] = useState({ open: false, marker: null, coords: null, mode: null });
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const isMarkerClickRef = useRef(false);
 
-  // 1️⃣ Markerları backend'den çek
-  useEffect(() => {
-    fetchMarkers();
-    // eslint-disable-next-line
-  }, []);
+  // ROL VE USER ID
+  const isAdmin = localStorage.getItem("role") === "Admin";
+  const currentUserId = localStorage.getItem("userId");
 
+  // --- MARKERLARI BACKEND'DEN ÇEK ---
   const fetchMarkers = async () => {
     try {
       const token = localStorage.getItem("token");
       const res = await axios.get("http://localhost:5143/api/MapPoints", {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // Konsolda gör
-      console.log("Gelen markerlar:", res.data);
-      // Dönüştür, hatalıları filtrele
-      setMarkers(
-        res.data
-          .map(m => {
-            const latlng = getLatLng(m);
-            if (!latlng) return null;
-            return {
-              ...m,
-              lat: latlng[0],
-              lng: latlng[1],
-            };
-          })
-          .filter(Boolean)
-      );
+      // Backend markerları {id, title, description, latitude, longitude, createdBy} ile döndürmeli!
+      const markersData = res.data.map((m) => ({
+        ...m,
+        lat: m.latitude,
+        lng: m.longitude,
+        createdBy: m.createdBy,
+      }));
+      setMarkers(markersData.filter((m) => typeof m.lat === "number" && typeof m.lng === "number"));
     } catch (err) {
       alert("Marker çekilemedi: " + err.message);
     }
   };
 
-  // 2️⃣ Harita üstüne tıklayınca yeni marker ekleme
-  function AddMarkerOnClick() {
-    useMapEvents({
-      click(e) {
-        setAdding(true);
-        setNewTitle("");
-        setNewDesc("");
-        setMarkers((prev) =>
-          prev.filter((m) => m.id !== "temp")
-        );
-        setMarkers((prev) => [
-          ...prev,
-          {
-            id: "temp",
-            lat: e.latlng.lat,
-            lng: e.latlng.lng,
-            title: "",
-            description: "",
-            isTemp: true,
-          },
-        ]);
-      },
-    });
-    return null;
-  }
+  useEffect(() => { fetchMarkers(); }, []);
 
-  // 3️⃣ Marker ekle
-  const handleAdd = async () => {
-    const temp = markers.find((m) => m.id === "temp");
-    if (!temp) return;
-    try {
-      const token = localStorage.getItem("token");
-      const res = await axios.post(
-        "http://localhost:5143/api/MapPoints",
-        {
-          title: newTitle,
-          description: newDesc,
-          lat: temp.lat,
-          lng: temp.lng,
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
+  // --- HARİTAYI OLUŞTUR ---
+  useEffect(() => {
+    if (map) return;
+    const mapInstance = new Map({
+      target: mapRef.current,
+      layers: [
+        new TileLayer({ source: new OSM() }),
+        new VectorLayer({ source: vectorSource }),
+      ],
+      view: new View({ center: fromLonLat([32.85, 39.93]), zoom: 6 }),
+    });
+    setMap(mapInstance);
+    return () => mapInstance.setTarget(null);
+  }, []);
+
+  // --- MARKERLARI HARİTAYA EKLE ---
+  useEffect(() => {
+    vectorSource.clear();
+    markers.forEach((marker) => {
+      if (typeof marker.lng !== "number" || typeof marker.lat !== "number") return;
+      const feature = new Feature({
+        geometry: new Point(fromLonLat([marker.lng, marker.lat])),
+        markerId: marker.id,
+      });
+      feature.setStyle(
+        new Style({
+          image: new Icon({
+            src: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+            anchor: [0.5, 1],
+            scale: 0.06,
+          }),
+        })
       );
-      // Yeni eklenen marker'ı dönüştür ve ekle
-      const latlng = getLatLng(res.data) || [temp.lat, temp.lng];
-      setMarkers((prev) => [
-        ...prev.filter((m) => m.id !== "temp"),
-        {
-          ...res.data,
-          lat: latlng[0],
-          lng: latlng[1]
-        }
-      ]);
-      setAdding(false);
+      feature.set("data", marker);
+      vectorSource.addFeature(feature);
+    });
+  }, [markers, vectorSource]);
+
+  // --- MARKER'A TIKLANINCA POPUP AÇ ---
+  useEffect(() => {
+    if (!map) return;
+    const markerHandler = (evt) => {
+      let found = false;
+      map.forEachFeatureAtPixel(evt.pixel, (feature) => {
+        const marker = feature.get("data");
+        setPopup({ open: true, marker, coords: [marker.lng, marker.lat], mode: "edit" });
+        setTitle(marker.title || "");
+        setDesc(marker.description || "");
+        found = true;
+        isMarkerClickRef.current = true;
+      });
+      if (!found && popup.mode !== "add") {
+        setPopup({ open: false, marker: null, coords: null, mode: null });
+      }
+    };
+    map.on("click", markerHandler);
+    return () => map.un("click", markerHandler);
+  }, [map, popup.mode]);
+
+  // --- HARİTAYA TIKLAYINCA YENİ MARKER EKLEME POPUP'I AÇ ---
+  useEffect(() => {
+    if (!map) return;
+    const mapHandler = (evt) => {
+      if (isMarkerClickRef.current) {
+        isMarkerClickRef.current = false;
+        return;
+      }
+      const coords = toLonLat(evt.coordinate);
+      setPopup({ open: true, marker: null, coords, mode: "add" });
+      setTitle("");
+      setDesc("");
+    };
+    map.on("singleclick", mapHandler);
+    return () => map.un("singleclick", mapHandler);
+  }, [map]);
+
+  // --- KAYDET/EKLE ---
+  const handleSave = async () => {
+    const token = localStorage.getItem("token");
+    try {
+      if (popup.mode === "add") {
+        await axios.post(
+          "http://localhost:5143/api/MapPoints",
+          {
+            title,
+            description: desc,
+            latitude: popup.coords[1],
+            longitude: popup.coords[0],
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        await fetchMarkers(); // eklemeden sonra tekrar çek
+      } else if (popup.mode === "edit" && popup.marker) {
+        await axios.put(
+          `http://localhost:5143/api/MapPoints/${popup.marker.id}`,
+          {
+            id: popup.marker.id,
+            title,
+            description: desc,
+            latitude: popup.marker.lat,
+            longitude: popup.marker.lng,
+            createdBy: popup.marker.createdBy,
+            isAdmin: isAdmin
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        await fetchMarkers(); // güncellemeden sonra tekrar çek
+      }
+      setPopup({ open: false, marker: null, coords: null, mode: null });
     } catch (err) {
-      alert("Ekleme başarısız: " + err.message);
+      alert("Kaydetme başarısız: " + err.message);
     }
   };
 
-  // 4️⃣ Marker sil
-  const handleDelete = async (id) => {
+  // --- SİL ---
+  const handleDelete = async () => {
+    if (!popup.marker) return;
+    const token = localStorage.getItem("token");
     try {
-      const token = localStorage.getItem("token");
-      await axios.delete(`http://localhost:5143/api/MapPoints/${id}`, {
+      await axios.delete(`http://localhost:5143/api/MapPoints/${popup.marker.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setMarkers((prev) => prev.filter((m) => m.id !== id));
+      await fetchMarkers();
+      setPopup({ open: false, marker: null, coords: null, mode: null });
     } catch (err) {
       alert("Silme başarısız: " + err.message);
     }
   };
 
-  // 5️⃣ Marker güncelle
-  const handleEdit = (marker) => {
-    setEditMarkerId(marker.id);
-    setEditTitle(marker.title);
-    setEditDesc(marker.description);
-  };
-
-  const handleUpdate = async () => {
-    try {
-      const token = localStorage.getItem("token");
-      await axios.put(
-        `http://localhost:5143/api/MapPoints/${editMarkerId}`,
-        {
-          title: editTitle,
-          description: editDesc,
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      setMarkers((prev) =>
-        prev.map((m) =>
-          m.id === editMarkerId
-            ? { ...m, title: editTitle, description: editDesc }
-            : m
-        )
-      );
-      setEditMarkerId(null);
-    } catch (err) {
-      alert("Güncelleme başarısız: " + err.message);
-    }
-  };
+  // ----------- RENDER -----------
 
   return (
-    <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer center={[20, 0]} zoom={2} style={{ height: "100vh", width: "100vw" }}>
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <AddMarkerOnClick />
-        {markers.map((marker) =>
-          marker.isTemp ? (
-            <Marker position={[marker.lat, marker.lng]} key="temp">
-              <Popup>
-                <Box display="flex" flexDirection="column" gap={2}>
-                  <TextField
-                    label="Başlık"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                  />
-                  <TextField
-                    label="Açıklama"
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                  />
-                  <Button variant="contained" onClick={handleAdd}>
-                    Ekle
-                  </Button>
-                  <Button variant="outlined" color="error" onClick={() => setAdding(false)}>
-                    Vazgeç
-                  </Button>
-                </Box>
-              </Popup>
-            </Marker>
-          ) : (
-            <Marker position={[marker.lat, marker.lng]} key={marker.id}>
-              <Popup>
-                {editMarkerId === marker.id ? (
-                  <Box display="flex" flexDirection="column" gap={2}>
-                    <TextField
-                      label="Başlık"
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                    />
-                    <TextField
-                      label="Açıklama"
-                      value={editDesc}
-                      onChange={(e) => setEditDesc(e.target.value)}
-                    />
-                    <Button variant="contained" onClick={handleUpdate}>
-                      Kaydet
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      onClick={() => setEditMarkerId(null)}
-                    >
-                      Vazgeç
-                    </Button>
-                  </Box>
-                ) : (
-                  <Box display="flex" flexDirection="column" gap={1}>
-                    <b>{marker.title}</b>
-                    <div>{marker.description}</div>
-                    <Button
-                      variant="outlined"
-                      onClick={() => handleEdit(marker)}
-                      sx={{ mt: 1, mb: 0.5 }}
-                    >
-                      Güncelle
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      onClick={() => handleDelete(marker.id)}
-                      sx={{ mb: 1 }}
-                    >
-                      Sil
-                    </Button>
-                  </Box>
-                )}
-              </Popup>
-            </Marker>
-          )
-        )}
-      </MapContainer>
+    <div>
+      <div ref={mapRef} style={{ width: "100vw", height: "100vh" }} />
+      {/* === POPUP === */}
+      {popup.open && (
+        <div
+          style={{
+            position: "fixed",
+            left: "50vw",
+            top: "20vh",
+            transform: "translate(-50%, 0)",
+            background: "white",
+            padding: 18,
+            borderRadius: 14,
+            boxShadow: "0 4px 16px #0002",
+            minWidth: 260,
+            zIndex: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {/* SADECE ADMIN POPUP’INDA EKLEYEN BİLGİSİ */}
+          {isAdmin && (
+            <div style={{fontSize: "0.9em", color: "#888", marginBottom: 4}}>
+              Ekleyen: {popup.marker?.createdBy || "-"}
+            </div>
+          )}
+          <input
+            type="text"
+            placeholder="Başlık"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+          />
+          <textarea
+            placeholder="Açıklama"
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd" }}
+            rows={3}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button onClick={handleSave}>
+              {popup.mode === "edit" ? "Kaydet" : "Ekle"}
+            </button>
+            {popup.mode === "edit" && (
+              <button onClick={handleDelete} style={{ color: "red" }}>
+                Sil
+              </button>
+            )}
+            <button
+              onClick={() => setPopup({ open: false, marker: null, coords: null, mode: null })}
+              style={{ color: "#555" }}
+            >
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Sağ üstte Çıkış Yap butonu */}
+      <div
+        style={{
+          position: "fixed",
+          top: 24,
+          right: 32,
+          zIndex: 100,
+        }}
+      >
+        <button
+          onClick={() => {
+            localStorage.removeItem("token");
+            localStorage.removeItem("role");
+            localStorage.removeItem("userId");
+            window.location.href = "http://localhost:3000";
+          }}
+          style={{
+            padding: "8px 20px",
+            borderRadius: "8px",
+            background: "#e53935",
+            color: "white",
+            border: "none",
+            fontWeight: "bold",
+            fontSize: "1em",
+            cursor: "pointer",
+            boxShadow: "0 2px 8px #0002",
+            letterSpacing: 1,
+          }}
+        >
+          Çıkış Yap
+        </button>
+      </div>
     </div>
   );
 }
